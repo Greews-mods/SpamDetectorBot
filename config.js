@@ -7,8 +7,8 @@ module.exports = {
   // Channel where admin notifications are sent (#hlášení-spamu)
   adminChannelId: '1482323156046970942',
 
-  // Role to ping in admin notifications (optional, leave blank to just say @admin)
-  adminRoleId: process.env.ADMIN_ROLE_ID || '',
+  // Role to ping in admin notifications
+  adminRoleId: '709149046559735851',
 
   // Name of the mute role (created automatically if missing)
   muteRoleName: process.env.MUTE_ROLE_NAME || 'Muted',
