@@ -1,120 +1,71 @@
-# 🛡️ Discord Spam Detection Bot
+# Discord Spam Detection Bot
 
-Automaticky detekuje spam, ztlumí účet na 24h, smaže zprávy za posledních 24h a informuje adminy.
+Automatically detects spammers, mutes them for 24 hours, deletes their messages from the last 24 hours, and notifies admins in a specified channel.
 
----
+## How it works
 
-## 📁 Struktura souborů
+The bot monitors all messages and flags a user as a spammer if any of these conditions are met within an 8 second window:
 
-```
-discord-spam-bot/
-├── bot.js            ← hlavní logika bota
-├── spamDetector.js   ← detekce spamu (pravidla)
-├── config.js         ← nastavení (token, pravidla, admin kanál)
-├── package.json
-└── README.md
-```
+- 5 or more messages sent (rate flood)
+- 3 or more messages that are identical or very similar (duplicate flood)
+- 2 or more messages that are only a link (pure link spam)
 
----
+A single link message on its own is never flagged.
 
-## 🚀 Instalace a spuštění
+When spam is detected the bot will apply the Muted role to the user (creating it automatically if it does not exist), delete all their messages from the last 24 hours across all channels, and post a notification to the admin channel. The mute is automatically removed after 24 hours.
 
-### 1. Nainstaluj závislosti
+## Setup
+
+### 1. Install dependencies
+
 ```bash
 npm install
 ```
 
-### 2. Vytvoř bota na Discord Developer Portal
+### 2. Discord Developer Portal
 
-1. Jdi na https://discord.com/developers/applications
-2. Klikni **New Application** → pojmenuj ho
-3. Vlevo **Bot** → klikni **Add Bot**
-4. Zkopíruj **Token** (použiješ v kroku 3)
-5. Povol tyto **Privileged Gateway Intents**:
-   - ✅ `SERVER MEMBERS INTENT`
-   - ✅ `MESSAGE CONTENT INTENT`
+Go to https://discord.com/developers/applications and open your app.
 
-### 3. Nastav token
+Under the Bot tab, enable all three Privileged Gateway Intents:
+- Presence Intent
+- Server Members Intent
+- Message Content Intent
 
-**Varianta A – environment variable (doporučeno):**
-```bash
-# Linux / Mac
-export DISCORD_TOKEN=tvůj_token_zde
-node bot.js
+### 3. Invite the bot
 
-# Windows (PowerShell)
-$env:DISCORD_TOKEN="tvůj_token_zde"
-node bot.js
-```
+Use the OAuth2 URL Generator with the bot scope and these permissions:
+- Manage Roles
+- Manage Messages
+- Read Message History
+- Send Messages
+- View Channels
 
-**Varianta B – přímo v config.js:**
-```js
-token: 'tvůj_token_zde',
-```
+Open the generated URL in your browser and invite the bot to your server.
 
-### 4. Pozvi bota na server
+### 4. Role order
 
-Vygeneruj OAuth2 URL na Developer Portal:
-- Scopes: `bot`
-- Bot Permissions:
-  - ✅ Read Messages / View Channels
-  - ✅ Send Messages
-  - ✅ Manage Messages  ← nutné pro mazání
-  - ✅ Moderate Members ← nutné pro timeout/mute
+In your server's role settings, drag the bot's role above the Muted role. Without this the bot cannot assign the Muted role to anyone.
 
-### 5. Spusť bota
+### 5. Environment variable
+
+The only variable required is DISCORD_TOKEN. Set this in Railway's Variables tab. Everything else is hardcoded in config.js.
+
+### 6. Run
+
 ```bash
 npm start
-# nebo pro development s auto-restartem:
-npm run dev
 ```
 
----
+Or deploy via Railway by pushing to GitHub.
 
-## ⚙️ Konfigurace (config.js)
+## Configuration
 
-| Parametr | Výchozí | Popis |
+All settings are in config.js. The admin notification channel and admin role are hardcoded there. Spam detection thresholds can also be adjusted in that file.
+
+| Setting | Default | Description |
 |---|---|---|
-| `adminChannelName` | `admin-log` | Název kanálu pro admin notifikace |
-| `windowSeconds` | `10` | Časové okno pro počítání zpráv (s) |
-| `maxMessagesPerWindow` | `7` | Max zpráv v okně |
-| `maxDuplicates` | `4` | Max stejných zpráv |
-| `maxMentions` | `5` | Max @zmínek v jedné zprávě |
-| `maxLinksPerWindow` | `5` | Max odkazů v okně |
-| `maxInvitesPerWindow` | `3` | Max Discord pozvánek v okně |
-| `maxMessageLength` | `1000` | Max délka jedné zprávy |
-
----
-
-## 🔍 Co bot detekuje
-
-| Typ spamu | Pravidlo |
-|---|---|
-| **Zprávy záplavou** | 7+ zpráv za 10 sekund |
-| **Opakující se obsah** | 4× stejná zpráva |
-| **Mass-mention** | @everyone / @here nebo 5+ zmínek |
-| **Odkaz flood** | 5+ URL v okně |
-| **Invite flood** | 3+ Discord pozvánek |
-| **Stěna textu** | zpráva >1000 znaků nebo 20+ stejných znaků za sebou |
-
----
-
-## 📨 Vzor admin notifikace
-
-Bot pošle embed zprávu do admin kanálu:
-
-> 🚨 **Spam detekován – automatická akce**
-> Osoba @uživatel nejspíše spamovala, proběhlo ztlumení a smazání zpráv za posledních 24h.
->
-> 👤 Uživatel: [user#1234](https://discord.com/users/ID)
-> ⏱️ Ztlumení: 24 hodin
-> 🗑️ Smazaných zpráv: 15
-
----
-
-## ⚠️ Důležité poznámky
-
-- Bot **ignoruje administrátory** a uživatele s oprávněním `Manage Messages`
-- Role bota musí být **výše** než role uživatele, kterého chce ztlumit
-- Discord API umožňuje bulk-delete jen zpráv **mladších 14 dní**
-- Doporučuje se provozovat na VPS nebo službě jako Railway / Fly.io pro 24/7 provoz
+| windowMs | 8000 | Tracking window in milliseconds |
+| maxMessagesInWindow | 5 | Messages in window before rate flood triggers |
+| minDuplicatesForSpam | 3 | Similar messages before duplicate flood triggers |
+| similarityThreshold | 0.75 | How similar two messages need to be (0-1) |
+| maxLinksInWindow | 2 | Pure link messages before link spam triggers |
