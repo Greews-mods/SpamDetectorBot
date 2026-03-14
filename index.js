@@ -49,8 +49,24 @@ async function handleSpammer(triggerMessage) {
   console.log(`Spam detected from ${user.tag} (${user.id})`);
 
   try {
+    // Mute immediately
     await member.roles.add(muteRole, 'Spam detection - auto mute 24h');
+    spamDetector.clearUser(user.id);
 
+    // DM the muted user
+    await user.send(
+      'Byl/a jsi ztlumen/a na 24h z důvodu podezření spamů a tvé zprávy za posledních 24h na tomto serveru byly automaticky smazány.'
+    ).catch(() => {});
+
+    // Notify admins
+    await notifyAdmins(guild, user);
+
+    // Delete messages in background (non-blocking)
+    deleteRecentMessages(guild, user.id).catch(err =>
+      console.error('Error deleting messages:', err.message)
+    );
+
+    // Schedule unmute after 24h
     setTimeout(async () => {
       try {
         const freshMember = await guild.members.fetch(user.id).catch(() => null);
@@ -62,10 +78,6 @@ async function handleSpammer(triggerMessage) {
         console.error(`Failed to unmute ${user.tag}:`, e.message);
       }
     }, 24 * 60 * 60 * 1000);
-
-    const deleted = await deleteRecentMessages(guild, user.id);
-    spamDetector.clearUser(user.id);
-    await notifyAdmins(guild, user, deleted);
 
   } catch (err) {
     console.error('Error handling spammer:', err);
@@ -134,7 +146,7 @@ async function getOrCreateMuteRole(guild) {
   return muteRole;
 }
 
-async function notifyAdmins(guild, user, deletedCount) {
+async function notifyAdmins(guild, user) {
   const adminChannel = await client.channels.fetch(config.adminChannelId).catch(() => null);
   if (!adminChannel) {
     console.warn(`Admin channel ${config.adminChannelId} not found!`);
@@ -145,7 +157,7 @@ async function notifyAdmins(guild, user, deletedCount) {
 
   await adminChannel.send(
     `${adminMention} Osoba <@${user.id}> byla ztlumena z podezření na spam. ` +
-    `Zprávy za posledních 24 hodin byly smazány (${deletedCount} zpráv odstraněno). ` +
+    `Zprávy za posledních 24 hodin byly smazány. ` +
     `Ztlumení vyprší za 24 hodin.`
   ).catch(err => console.error('Failed to send admin notification:', err.message));
 }
