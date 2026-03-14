@@ -30,6 +30,6 @@ module.exports = {
 
     // How many messages containing links in the window = link spam
     // (single link message is fine; this triggers on repeated link messages)
-    maxLinksInWindow: parseInt(process.env.SPAM_MAX_LINKS) || 3,
+    maxLinksInWindow: parseInt(process.env.SPAM_MAX_LINKS) || 2,
   },
 };

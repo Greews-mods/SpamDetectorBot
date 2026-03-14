@@ -1,126 +1,131 @@
-/**
- * SpamDetector – heuristic, multi-signal spam detection
- *
- * Signals checked:
- *  1. Message frequency  – too many messages in a short window
- *  2. Duplicate content  – same text repeated N times
- *  3. Mass-mention       – pinging many users / roles / @everyone
- *  4. Link flood         – many URLs in one or consecutive messages
- *  5. Character flood    – very long wall-of-text / repeated chars
- *  6. Discord invite     – repeated posting of invite links
- */
+const config = require('./config');
 
-const config = require('./config.js');
+function diceSimilarity(a, b) {
+  if (a === b) return 1.0;
+  if (a.length < 2 || b.length < 2) return 0.0;
+
+  const getBigrams = (str) => {
+    const bigrams = new Set();
+    for (let i = 0; i < str.length - 1; i++) {
+      bigrams.add(str.slice(i, i + 2).toLowerCase());
+    }
+    return bigrams;
+  };
+
+  const aGrams = getBigrams(a);
+  const bGrams = getBigrams(b);
+
+  let intersection = 0;
+  for (const gram of aGrams) {
+    if (bGrams.has(gram)) intersection++;
+  }
+
+  return (2.0 * intersection) / (aGrams.size + bGrams.size);
+}
+
+function normalizeContent(content) {
+  return content
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, '[URL]')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function countLinks(content) {
+  const urlRegex = /https?:\/\/\S+/gi;
+  const matches = content.match(urlRegex);
+  return matches ? matches.length : 0;
+}
+
+function isPureLink(content) {
+  // Message is only a URL with no other text
+  return /^\s*https?:\/\/\S+\s*$/.test(content);
+}
 
 class SpamDetector {
   constructor() {
-    // Map<userId, { messages: [{content, timestamp}], warned: bool }>
-    this.userHistory = new Map();
-
-    // Purge old records every 10 minutes
-    setInterval(() => this._purgeOld(), 10 * 60 * 1000);
+    this.userMessages = new Map();
+    setInterval(() => this.cleanup(), 10 * 60 * 1000);
   }
 
-  /**
-   * Analyse a single Discord message.
-   * Returns true if spam is detected.
-   */
   analyze(message) {
     const userId = message.author.id;
     const content = message.content || '';
     const now = Date.now();
 
-    // Initialise history for this user
-    if (!this.userHistory.has(userId)) {
-      this.userHistory.set(userId, { messages: [] });
+    const record = {
+      content,
+      normalized: normalizeContent(content),
+      links: countLinks(content),
+      isPureLink: isPureLink(content),
+      timestamp: now,
+    };
+
+    if (!this.userMessages.has(userId)) {
+      this.userMessages.set(userId, []);
     }
 
-    const record = this.userHistory.get(userId);
+    const history = this.userMessages.get(userId);
+    history.push(record);
 
-    // Store message
-    record.messages.push({ content, timestamp: now });
+    const windowMs = config.spam.windowMs;
+    const recent = history.filter((r) => now - r.timestamp <= windowMs);
+    this.userMessages.set(userId, recent);
 
-    // Only keep messages within the detection window
-    const windowMs = (config.spam.windowSeconds || 10) * 1000;
-    record.messages = record.messages.filter((m) => now - m.timestamp <= windowMs);
+    // Rule 1: Rate flood — too many messages regardless of content
+    if (recent.length >= config.spam.maxMessagesInWindow) {
+      console.log(`[SpamDetector] Rate flood: ${message.author.tag} (${recent.length} msgs in window)`);
+      return true;
+    }
 
-    // ── Run checks ──────────────────────────────────────────────────────────
-    if (this._checkFrequency(record)) return true;
-    if (this._checkDuplicates(record)) return true;
-    if (this._checkMassMention(message)) return true;
-    if (this._checkLinkFlood(record)) return true;
-    if (this._checkCharFlood(content)) return true;
-    if (this._checkInviteFlood(record)) return true;
+    // Rule 2: Pure link spam — sending links repeatedly (2+ is enough)
+    const recentPureLinks = recent.filter((r) => r.isPureLink);
+    if (recentPureLinks.length >= config.spam.maxLinksInWindow) {
+      console.log(`[SpamDetector] Pure link spam: ${message.author.tag} (${recentPureLinks.length} pure link msgs)`);
+      return true;
+    }
+
+    // Rule 3: Any messages with links repeated (not just pure links)
+    const recentWithLinks = recent.filter((r) => r.links > 0);
+    if (recentWithLinks.length >= config.spam.maxLinksInWindow + 1) {
+      console.log(`[SpamDetector] Link spam: ${message.author.tag} (${recentWithLinks.length} link msgs)`);
+      return true;
+    }
+
+    // Rule 4: Duplicate / near-duplicate flood
+    if (recent.length >= config.spam.minDuplicatesForSpam) {
+      const similarities = [];
+      for (let i = 0; i < recent.length - 1; i++) {
+        const sim = diceSimilarity(recent[i].normalized, record.normalized);
+        similarities.push(sim);
+      }
+      const highSimilarityCount = similarities.filter(
+        (s) => s >= config.spam.similarityThreshold
+      ).length;
+
+      if (highSimilarityCount >= config.spam.minDuplicatesForSpam - 1) {
+        console.log(`[SpamDetector] Duplicate flood: ${message.author.tag} (${highSimilarityCount} similar msgs)`);
+        return true;
+      }
+    }
 
     return false;
   }
 
-  // ── Individual checks ──────────────────────────────────────────────────────
-
-  /** Too many messages in the sliding window */
-  _checkFrequency(record) {
-    const limit = config.spam.maxMessagesPerWindow || 7;
-    return record.messages.length >= limit;
+  clearUser(userId) {
+    this.userMessages.delete(userId);
   }
 
-  /** Same (or very similar) message repeated */
-  _checkDuplicates(record) {
-    const limit = config.spam.maxDuplicates || 4;
-    const latest = record.messages[record.messages.length - 1].content.toLowerCase().trim();
-    if (!latest) return false;
-
-    const count = record.messages.filter(
-      (m) => m.content.toLowerCase().trim() === latest
-    ).length;
-    return count >= limit;
-  }
-
-  /** Mentions @everyone / @here or many individual users */
-  _checkMassMention(message) {
-    if (message.mentions.everyone) return true;
-    const limit = config.spam.maxMentions || 5;
-    return message.mentions.users.size + message.mentions.roles.size >= limit;
-  }
-
-  /** Multiple URLs across recent messages */
-  _checkLinkFlood(record) {
-    const urlRegex = /https?:\/\/\S+/gi;
-    const limit = config.spam.maxLinksPerWindow || 5;
-    let linkCount = 0;
-    for (const m of record.messages) {
-      const matches = m.content.match(urlRegex);
-      if (matches) linkCount += matches.length;
-    }
-    return linkCount >= limit;
-  }
-
-  /** Very long message or sequences of repeated characters */
-  _checkCharFlood(content) {
-    if (content.length > (config.spam.maxMessageLength || 1000)) return true;
-    // Detect 20+ identical consecutive characters (e.g. "aaaaaaaaaaaaaaaaaaaaa")
-    if (/(.)\1{19,}/.test(content)) return true;
-    return false;
-  }
-
-  /** Repeated Discord invite links */
-  _checkInviteFlood(record) {
-    const inviteRegex = /discord(?:\.gg|app\.com\/invite)\/\S+/gi;
-    const limit = config.spam.maxInvitesPerWindow || 3;
-    let count = 0;
-    for (const m of record.messages) {
-      if (inviteRegex.test(m.content)) count++;
-      inviteRegex.lastIndex = 0; // reset regex state
-    }
-    return count >= limit;
-  }
-
-  // ── Housekeeping ────────────────────────────────────────────────────────────
-
-  _purgeOld() {
-    const cutoff = Date.now() - 60 * 60 * 1000; // 1 hour
-    for (const [userId, record] of this.userHistory) {
-      record.messages = record.messages.filter((m) => m.timestamp >= cutoff);
-      if (record.messages.length === 0) this.userHistory.delete(userId);
+  cleanup() {
+    const now = Date.now();
+    const windowMs = config.spam.windowMs;
+    for (const [userId, messages] of this.userMessages) {
+      const fresh = messages.filter((m) => now - m.timestamp <= windowMs);
+      if (fresh.length === 0) {
+        this.userMessages.delete(userId);
+      } else {
+        this.userMessages.set(userId, fresh);
+      }
     }
   }
 }
