@@ -32,6 +32,8 @@ client.on('messageCreate', async (message) => {
 
   const isSpam = spamDetector.analyze(message);
   if (isSpam) {
+    // Delete the triggering message immediately so it doesn't notify anyone
+    await message.delete().catch(() => {});
     await handleSpammer(message);
   }
 });
