@@ -15,7 +15,7 @@ const client = new Client({
 
 const spamDetector = new SpamDetector();
 
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log(`Spam bot online as ${client.user.tag}`);
   console.log(`Admin channel ID: ${config.adminChannelId}`);
 });
@@ -127,13 +127,13 @@ async function getOrCreateMuteRole(guild) {
     console.log(`Creating mute role "${config.muteRoleName}"...`);
     muteRole = await guild.roles.create({
       name: config.muteRoleName,
-      color: 0x808080,
+      colors: [0x808080],
       reason: 'Auto-created by spam bot',
       permissions: [],
     });
 
     for (const [, channel] of guild.channels.cache) {
-      if (channel.isTextBased()) {
+      if (channel.isTextBased() && channel.permissionOverwrites) {
         await channel.permissionOverwrites.create(muteRole, {
           SendMessages: false,
           AddReactions: false,
